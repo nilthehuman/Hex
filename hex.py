@@ -110,11 +110,26 @@ def turn_to_move(piece, color):
     else:
         return False
 
+def square_available(square, color):
+    x, y = square.x, square.y
+    if x < 0 or x > 7 or y < 0 or y > 7:
+        return False
+    return not turn_to_move(pos.board[y][x], pos.color)
+
+def square_available_for_take(square, color):
+    x, y = square.x, square.y
+    if x < 0 or x > 7 or y < 0 or y > 7:
+        return False
+    if pos.board[y][x] == ' ':
+        return False
+    return pos.board[y][x].islower() == (color == 'w')
+
 def get_moves(pos, square):
     moves = []
     x, y = square.x, square.y
     if pos.board[y][x] == ' ':
         return []
+    # pawns are funky, define movement explicitly
     if pos.board[y][x] == 'p':
         if pos.board[y+1][x] == ' ':
             # not blocked
@@ -143,11 +158,49 @@ def get_moves(pos, square):
             # take to the right
             moves.append((square, Square(x+1, y-1)))
         return moves
+    # --- regular pieces ---
     if pos.board[y][x].upper() == 'N':
-        return []
-    # etc.
+        for dx in [-1, 1]:
+            for dy in [-2, 2]:
+                candidate_square = Square(x+dx, y+dy)
+                if square_available(candidate_square, pos.color):
+                    moves.append((square, candidate_square))
+        for dx in [-2, 2]:
+            for dy in [-1, 1]:
+                candidate_square = Square(x+dx, y+dy)
+                if square_available(candidate_square, pos.color):
+                    moves.append((square, candidate_square))
+    if pos.board[y][x].upper() == 'B':
+        for delta in [Square(-1, -1), Square(-1, 1), Square(1, -1), Square(1, 1)]:
+            candidate_square = square + delta
+            while square_available(candidate_square, pos.color):
+                moves.append((square, candidate_square))
+                if square_available_for_take(candidate_square, pos.color):
+                    break
+                candidate_square += delta
+    if pos.board[y][x].upper() == 'R':
+        for delta in [Square(0, -1), Square(-1, 0), Square(0, 1), Square(1, 0)]:
+            candidate_square = square + delta
+            while square_available(candidate_square, pos.color):
+                moves.append((square, candidate_square))
+                if square_available_for_take(candidate_square, pos.color):
+                    break
+                candidate_square += delta
+    if pos.board[y][x].upper() == 'Q':
+        # a combination of B + R
+        orig_piece = pos.board[y][x]
+        pos.board[y][x] = 'B' if pos.board[y][x].isupper() else 'b'
+        moves = get_moves(pos, square)
+        pos.board[y][x] = 'R' if pos.board[y][x].isupper() else 'r'
+        moves += get_moves(pos, square)
+        pos.board[y][x] = orig_piece
+    if pos.board[y][x].upper() == 'K':
+        for dx in range(-1, 2):
+            for dy in range(-1, 2):
+                candidate_square = Square(x+dx, y+dy)
+                if square_available(candidate_square, pos.color):
+                    moves.append((square, candidate_square))
     return moves
-    assert False
 
 #### #### #### #### ####
 def gen_all_moves(pos):
@@ -165,7 +218,7 @@ def minimax(pos, alpha, beta, depth): # depth is in plies
         pos.score = score(pos)
         return pos
     optimum = Position()
-    optimum.score = -1000 if pos.color == 'w' else 1000
+    optimum.score = alpha if pos.color == 'w' else beta
     opt = max if pos.color == 'w' else min
     for move in gen_all_moves(pos):
         new_pos = pos.make_move(move)
@@ -206,7 +259,7 @@ def score_material(pos):
     sum = 0
     for rank in pos.board:
         for square in rank:
-            sum = sum + whose_man(square, pos.color) * piece_value(square)
+            sum += whose_man(square, pos.color) * piece_value(square)
     return sum
 
 # optimization results will go here:
@@ -228,9 +281,6 @@ constants_count = int(input())
 for i in range(constants_count):
     name, value = input().split()
 #    print("name=%s, value=%s" % (name, value), file=sys.stderr, flush=True)
-
-# Write an action using print
-# To debug: print("Debug messages...", file=sys.stderr, flush=True)
 
 print("fen")
 
@@ -260,10 +310,11 @@ while True:
 
     all_moves = gen_all_moves(pos)
     print(list(map(move_to_algebraic, all_moves)), file=sys.stderr, flush=True)
-    print(minimax(pos, -1000, 1000, 2), file=sys.stderr, flush=True)
+    best = minimax(pos, -1000, 1000, 2)
+    print(best, file=sys.stderr, flush=True)
     #print(tree, file=sys.stderr, flush=True)
     #print("score: %0.2f" % score_material(pos), file=sys.stderr, flush=True)
 
-    print("random")
+    print(move_to_algebraic(best.optimal_move))
 
     print("time used: %d microsecs" % ((time.time_ns() - start_time) / (10**3)), file=sys.stderr, flush=True)
