@@ -3,6 +3,8 @@ import time
 import copy
 import math
 
+from itertools import chain
+
 class Square:
     x = -1
     y = -1
@@ -157,8 +159,9 @@ def gen_all_moves(pos):
                 for m in moves:
                     yield m
 
-def minimax(pos, depth): # depth is in plies  # TODO: alpha, beta
+def minimax(pos, alpha, beta, depth): # depth is in plies
     if depth < 1:
+        # call heuristic evaluation
         pos.score = score(pos)
         return pos
     optimum = Position()
@@ -166,9 +169,13 @@ def minimax(pos, depth): # depth is in plies  # TODO: alpha, beta
     opt = max if pos.color == 'w' else min
     for move in gen_all_moves(pos):
         new_pos = pos.make_move(move)
-        optimum = opt(optimum, minimax(new_pos, depth - 1), key=lambda pos: pos.score)
-        # if alpha >= beta:
-            # alpha-beta cut will happen here
+        optimum = opt(optimum, minimax(new_pos, alpha, beta, depth - 1), key=lambda pos: pos.score)
+        if pos.color == 'w':
+            alpha = max(alpha, optimum.score)
+        else:
+            beta = min(beta, optimum.score)
+        if alpha >= beta:
+            break
     pos.optimal_move = optimum.last_move
     pos.score = optimum.score
     return pos
@@ -253,7 +260,7 @@ while True:
 
     all_moves = gen_all_moves(pos)
     print(list(map(move_to_algebraic, all_moves)), file=sys.stderr, flush=True)
-    print(minimax(pos, 2), file=sys.stderr, flush=True)
+    print(minimax(pos, -1000, 1000, 2), file=sys.stderr, flush=True)
     #print(tree, file=sys.stderr, flush=True)
     #print("score: %0.2f" % score_material(pos), file=sys.stderr, flush=True)
 
