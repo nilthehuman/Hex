@@ -42,12 +42,12 @@ def piece_value(piece):
 # what the game looks like at the moment
 # no castling, no en passant
 class Position:
-    board = []
-    color = ''
-
     def reset(self):
         self.board = []
         self.color = ''
+        self.last_move = None
+        self.optimal_move = None
+        self.score = None
 
     def __init__(self, other=None):
         if other is None:
@@ -55,10 +55,16 @@ class Position:
         else:
             self.board = copy.deepcopy(other.board)
             self.color = other.color
+            self.last_move = other.last_move
+            self.optimal_move = None
+            self.score = None
 
     def __str__(self):
         rows = list(map(lambda x: ''.join(x), self.board))
-        return '\n'.join(rows)
+        show_board = '\n'.join(rows)
+        show_board = ''
+        show_pos = show_board + "\nscore: %0.2f\noptimal_move: %s" % (self.score, move_to_algebraic(self.optimal_move))
+        return show_pos
 
     def flip_color(self):
         if self.color == 'w':
@@ -72,6 +78,7 @@ class Position:
     def make_move(self, move):
         # it is the caller's responsibility to provide a legal move!
         new_pos = Position(self)
+        new_pos.last_move = move
         sq_from, sq_to = move
         # pawn promotion?
         if new_pos.board[sq_from.y][sq_from.x] == 'P' and sq_to.y == 0 or new_pos.board[sq_from.y][sq_from.x] == 'p' and sq_to.y == 7:
@@ -101,7 +108,7 @@ def turn_to_move(piece, color):
     else:
         return False
 
-def piece_moves(pos, square):
+def get_moves(pos, square):
     moves = []
     x, y = square.x, square.y
     if pos.board[y][x] == ' ':
@@ -140,56 +147,35 @@ def piece_moves(pos, square):
     return moves
     assert False
 
-def all_moves(pos):
-    moves = []
+#### #### #### #### ####
+def gen_all_moves(pos):
+    i = 0
     for y in range(8):
         for x in range(8):
             if turn_to_move(pos.board[y][x], pos.color):
-                moves = moves + piece_moves(pos, Square(x, y))
-    return moves
+                moves = get_moves(pos, Square(x, y))
+                for m in moves:
+                    yield m
 
-class Tree:
-    def __init__(self, pos, last_move):
-        self.children = []
-        self.pos = pos
-        self.last_move = last_move
-        self.optimal_move = None
-        self.score = None
-    
-    def __str__(self):
-        show_children = "[" + ','.join(map(str, self.children)) + "]"
-        show = "[%0.2f %s] %s" % (self.score, move_to_algebraic(self.optimal_move), show_children)
-        return show
-
-def build_game_tree(root, depth): # depth is in plies
+def minimax(pos, depth): # depth is in plies  # TODO: alpha, beta
     if depth < 1:
-        return
-    for move in all_moves(root.pos):
-        new_pos = root.pos.make_move(move)
-        root.children.append(Tree(new_pos, move))
-    if depth > 1:
-        for child in root.children:
-            build_game_tree(child, depth - 1)
+        pos.score = score(pos)
+        return pos
+    optimum = Position()
+    optimum.score = -1000 if pos.color == 'w' else 1000
+    opt = max if pos.color == 'w' else min
+    for move in gen_all_moves(pos):
+        new_pos = pos.make_move(move)
+        optimum = opt(optimum, minimax(new_pos, depth - 1), key=lambda pos: pos.score)
+        # if alpha >= beta:
+            # alpha-beta cut will happen here
+    pos.optimal_move = optimum.last_move
+    pos.score = optimum.score
+    return pos
 
-def score_tree_bottom(tree):
-    if not tree.children:
-        tree.score = score(tree.pos)
-    else:
-        for child in tree.children:
-            score_tree_bottom(child)
-
-def minimax(tree):
-    if not tree.children:
-        return
-    for child in tree.children:
-        minimax(child)
-    optimal = None
-    if tree.pos.color == 'w':
-        optimal = max(tree.children, key=lambda child: child.score)
-    else:
-        optimal = min(tree.children, key=lambda child: child.score)
-    tree.optimal_move = optimal.last_move
-    tree.score = optimal.score
+def test_minimax():
+    pass  # how do you create a mock for gen_all_moves? :S
+#### #### #### #### ####
 
 def algebraic_to_square(algebraic):
     file, rank = algebraic[0], algebraic[1]
@@ -209,9 +195,6 @@ def move_to_algebraic(move):
     sq_to = square_to_algebraic(move[1].x, move[1].y)
     return sq_from + sq_to
 
-def score_mate(pos):
-    return 0
-
 def score_material(pos):
     sum = 0
     for rank in pos.board:
@@ -222,14 +205,14 @@ def score_material(pos):
 # optimization results will go here:
 TUNED_WEIGHTS = {}
 
+def score_threats(pos):
+    return 0
+
 def score_position(pos):
     return 0
 
 def score(pos):
-    mate = score_mate(pos)
-    if bool(mate):
-        return mate
-    return score_material(pos) + score_position(pos)
+    return 1 * score_material(pos) + 1 * score_threats(pos) + 1 * score_position(pos)
 
 # Auto-generated code below aims at helping you parse
 # the standard input according to the problem statement.
@@ -260,18 +243,19 @@ while True:
                 pos.board[-1].append(square)
     pos.color = inputs[1]
 
+    # use 'moves' and 'lastmove' perhaps?
+
     # the following input fields are unimportant
     castling = inputs[2]
     en_passant = inputs[3]
     half_move_clock = int(inputs[4])
     full_move = int(inputs[5])
 
-    #print(list(map(move_to_algebraic, all_moves(pos))), file=sys.stderr, flush=True)
-    tree = Tree(pos, None)
-    build_game_tree(tree, 1)
-    score_tree_bottom(tree)
-    minimax(tree)
-    print(tree, file=sys.stderr, flush=True)
+    all_moves = gen_all_moves(pos)
+    print(list(map(move_to_algebraic, all_moves)), file=sys.stderr, flush=True)
+    print(minimax(pos, 2), file=sys.stderr, flush=True)
+    #print(tree, file=sys.stderr, flush=True)
+    #print("score: %0.2f" % score_material(pos), file=sys.stderr, flush=True)
 
     print("random")
 
