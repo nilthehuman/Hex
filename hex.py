@@ -5,6 +5,8 @@ import math
 
 from itertools import chain
 
+COPY_COUNTER = 0
+
 class Square:
     x = -1
     y = -1
@@ -48,6 +50,7 @@ class Position:
         self.board = []
         self.color = ''
         self.last_move = None
+        self.last_taken = None
         self.optimal_move = None
         self.score = None
 
@@ -55,17 +58,33 @@ class Position:
         if other is None:
             self.reset()
         else:
+            global COPY_COUNTER
+            COPY_COUNTER += 1
             self.board = copy.deepcopy(other.board)
             self.color = other.color
             self.last_move = other.last_move
+            self.last_taken = other.last_taken
             self.optimal_move = None
             self.score = None
+
+    @classmethod
+    def from_fen(cls, fen, color):
+        pos = Position()
+        pos.color = color
+        for rank in fen.split('/'):
+            pos.board.append([])
+            for square in rank:
+                if square.isdigit():
+                    for _ in range(int(square)):
+                        pos.board[-1].append(' ')
+                else:
+                    pos.board[-1].append(square)
+        return pos
 
     def __str__(self):
         rows = list(map(lambda x: ''.join(x), self.board))
         show_board = '\n'.join(rows)
-        show_board = ''
-        show_pos = show_board + "\nscore: %0.2f\noptimal_move: %s" % (self.score, move_to_algebraic(self.optimal_move))
+        show_pos = show_board #+ "\nscore: %0.2f\noptimal_move: %s" % (self.score, move_to_algebraic(self.optimal_move))
         return show_pos
 
     def flip_color(self):
@@ -79,18 +98,29 @@ class Position:
 
     def make_move(self, move):
         # it is the caller's responsibility to provide a legal move!
-        new_pos = Position(self)
-        new_pos.last_move = move
         sq_from, sq_to = move
+        self.last_move = move
+        self.last_taken = self.board[sq_to.y][sq_to.x]
         # pawn promotion?
-        if new_pos.board[sq_from.y][sq_from.x] == 'P' and sq_to.y == 0 or new_pos.board[sq_from.y][sq_from.x] == 'p' and sq_to.y == 7:
-            new_pos.board[sq_to.y][sq_to.x] = 'Q' if sq_to.y == 0 else 'q'
-            new_pos.board[sq_from.y][sq_from.x] = ' '
+        if self.board[sq_from.y][sq_from.x] == 'P' and sq_to.y == 0 or self.board[sq_from.y][sq_from.x] == 'p' and sq_to.y == 7:
+            self.board[sq_to.y][sq_to.x] = 'Q' if sq_to.y == 0 else 'q'
+            self.board[sq_from.y][sq_from.x] = ' '
         else:
-            new_pos.board[sq_to.y][sq_to.x] = new_pos.board[sq_from.y][sq_from.x]
-            new_pos.board[sq_from.y][sq_from.x] = ' '
-        new_pos.flip_color()
-        return new_pos
+            self.board[sq_to.y][sq_to.x] = self.board[sq_from.y][sq_from.x]
+            self.board[sq_from.y][sq_from.x] = ' '
+        self.flip_color()
+
+    def unmake_last_move(self):
+        sq_from, sq_to = self.last_move
+        if False:
+            # pawn unpromotion???
+            assert False
+        else:
+            self.board[sq_from.y][sq_from.x] = self.board[sq_to.y][sq_to.x]
+            self.board[sq_to.y][sq_to.x] = self.last_taken
+        self.last_move = None
+        self.last_taken = None
+        self.flip_color()
 
 #### #### #### #### ####
 
@@ -110,12 +140,6 @@ def turn_to_move(piece, color):
     else:
         return False
 
-def square_available(square, color):
-    x, y = square.x, square.y
-    if x < 0 or x > 7 or y < 0 or y > 7:
-        return False
-    return not turn_to_move(pos.board[y][x], pos.color)
-
 def square_available_for_take(square, color):
     x, y = square.x, square.y
     if x < 0 or x > 7 or y < 0 or y > 7:
@@ -124,42 +148,56 @@ def square_available_for_take(square, color):
         return False
     return pos.board[y][x].islower() == (color == 'w')
 
-def get_moves(pos, square):
+def square_available_for_quiet_move(square, color):
+    x, y = square.x, square.y
+    if x < 0 or x > 7 or y < 0 or y > 7:
+        return False
+    return pos.board[y][x] == ' '
+
+def get_takes(pos, square):
+    return get_moves(pos, square, square_available_for_take, take=True)
+
+def get_quiet_moves(pos, square):
+    return get_moves(pos, square, square_available_for_quiet_move, take=False)
+
+def get_moves(pos, square, square_available, take):
     moves = []
     x, y = square.x, square.y
     if pos.board[y][x] == ' ':
         return []
     # pawns are funky, define movement explicitly
-    if pos.board[y][x] == 'p':
-        if pos.board[y+1][x] == ' ':
-            # not blocked
-            moves.append((square, Square(x, y+1)))
-            if y == 1 and pos.board[y+2][x] == ' ':
-                # two squares from initial position
-                moves.append((square, Square(x, y+2)))
-        if x < 7 and pos.board[y+1][x+1].isupper():
-            # take to the left
-            moves.append((square, Square(x+1, y+1)))
-        if x > 0 and pos.board[y+1][x-1].isupper():
-            # take to the right
-            moves.append((square, Square(x-1, y+1)))
-        return moves
-    if pos.board[y][x] == 'P':
-        if pos.board[y-1][x] == ' ':
-            # not blocked
-            moves.append((square, Square(x, y-1)))
-            if y == 6 and pos.board[y-2][x] == ' ':
-                # two squares from initial position
-                moves.append((square, Square(x, y-2)))
-        if x > 0 and pos.board[y-1][x-1].islower():
-            # take to the left
-            moves.append((square, Square(x-1, y-1)))
-        if x < 7 and pos.board[y-1][x+1].islower():
-            # take to the right
-            moves.append((square, Square(x+1, y-1)))
-        return moves
+    elif pos.board[y][x] == 'p':
+        if take:
+            if x < 7 and pos.board[y+1][x+1].isupper():
+                # take to the left
+                moves.append((square, Square(x+1, y+1)))
+            if x > 0 and pos.board[y+1][x-1].isupper():
+                # take to the right
+                moves.append((square, Square(x-1, y+1)))
+        else:
+            if pos.board[y+1][x] == ' ':
+                # not blocked
+                moves.append((square, Square(x, y+1)))
+                if y == 1 and pos.board[y+2][x] == ' ':
+                    # two squares from initial position
+                    moves.append((square, Square(x, y+2)))
+    elif pos.board[y][x] == 'P':
+        if take:
+            if x > 0 and pos.board[y-1][x-1].islower():
+                # take to the left
+                moves.append((square, Square(x-1, y-1)))
+            if x < 7 and pos.board[y-1][x+1].islower():
+                # take to the right
+                moves.append((square, Square(x+1, y-1)))
+        else:
+            if pos.board[y-1][x] == ' ':
+                # not blocked
+                moves.append((square, Square(x, y-1)))
+                if y == 6 and pos.board[y-2][x] == ' ':
+                    # two squares from initial position
+                    moves.append((square, Square(x, y-2)))
     # --- regular pieces ---
-    if pos.board[y][x].upper() == 'N':
+    elif pos.board[y][x].upper() == 'N':
         for dx in [-1, 1]:
             for dy in [-2, 2]:
                 candidate_square = Square(x+dx, y+dy)
@@ -170,71 +208,117 @@ def get_moves(pos, square):
                 candidate_square = Square(x+dx, y+dy)
                 if square_available(candidate_square, pos.color):
                     moves.append((square, candidate_square))
-    if pos.board[y][x].upper() == 'B':
+    elif pos.board[y][x].upper() == 'B':
         for delta in [Square(-1, -1), Square(-1, 1), Square(1, -1), Square(1, 1)]:
             candidate_square = square + delta
-            while square_available(candidate_square, pos.color):
-                moves.append((square, candidate_square))
-                if square_available_for_take(candidate_square, pos.color):
-                    break
+            while square_available_for_quiet_move(candidate_square, pos.color):
+                if not take:
+                    moves.append((square, candidate_square))
                 candidate_square += delta
-    if pos.board[y][x].upper() == 'R':
+            if square_available(candidate_square, pos.color):
+                moves.append((square, candidate_square))
+    elif pos.board[y][x].upper() == 'R':
         for delta in [Square(0, -1), Square(-1, 0), Square(0, 1), Square(1, 0)]:
             candidate_square = square + delta
-            while square_available(candidate_square, pos.color):
-                moves.append((square, candidate_square))
-                if square_available_for_take(candidate_square, pos.color):
-                    break
+            while square_available_for_quiet_move(candidate_square, pos.color):
+                if not take:
+                    moves.append((square, candidate_square))
                 candidate_square += delta
-    if pos.board[y][x].upper() == 'Q':
+            if square_available(candidate_square, pos.color):
+                moves.append((square, candidate_square))
+    elif pos.board[y][x].upper() == 'Q':
         # a combination of B + R
         orig_piece = pos.board[y][x]
-        pos.board[y][x] = 'B' if pos.board[y][x].isupper() else 'b'
-        moves = get_moves(pos, square)
-        pos.board[y][x] = 'R' if pos.board[y][x].isupper() else 'r'
-        moves += get_moves(pos, square)
+        pos.board[y][x] = 'B' if orig_piece.isupper() else 'b'
+        moves = get_moves(pos, square, square_available, take)
+        pos.board[y][x] = 'R' if orig_piece.isupper() else 'r'
+        moves += get_moves(pos, square, square_available, take)
         pos.board[y][x] = orig_piece
-    if pos.board[y][x].upper() == 'K':
+    elif pos.board[y][x].upper() == 'K':
         for dx in range(-1, 2):
             for dy in range(-1, 2):
                 candidate_square = Square(x+dx, y+dy)
                 if square_available(candidate_square, pos.color):
                     moves.append((square, candidate_square))
+    else:
+        assert False
     return moves
 
 #### #### #### #### ####
-def gen_all_moves(pos):
-    i = 0
+def gen_all_moves(pos, take=False):
     for y in range(8):
         for x in range(8):
             if turn_to_move(pos.board[y][x], pos.color):
-                moves = get_moves(pos, Square(x, y))
-                for m in moves:
-                    yield m
+                if take:
+                    takes = get_takes(pos, Square(x, y))
+                    for t in takes:
+                        yield t
+                else:
+                    moves = get_quiet_moves(pos, Square(x, y))
+                    for m in moves:
+                        yield m
 
 def minimax(pos, alpha, beta, depth): # depth is in plies
     if depth < 1:
         # call heuristic evaluation
         pos.score = score(pos)
+        #print(pos, file=sys.stderr, flush=True)
         return pos
-    optimum = Position()
-    optimum.score = alpha if pos.color == 'w' else beta
+    # zugzwang does not exist, so a move can only improve the position
+    optimal_move = None
+    optimal_score = alpha if pos.color == 'w' else beta
     opt = max if pos.color == 'w' else min
-    for move in gen_all_moves(pos):
-        new_pos = pos.make_move(move)
-        optimum = opt(optimum, minimax(new_pos, alpha, beta, depth - 1), key=lambda pos: pos.score)
-        if pos.color == 'w':
-            alpha = max(alpha, optimum.score)
-        else:
-            beta = min(beta, optimum.score)
-        if alpha >= beta:
+    # avoid copying the entire board array every time
+    new_pos = Position(pos)
+    all_moves = chain(gen_all_moves(pos, take=True), gen_all_moves(pos, take=False))
+    for move in all_moves:
+        new_pos.make_move(move)
+        new_score = opt(optimal_score, minimax(new_pos, alpha, beta, depth-1).score)
+        # improvement?
+        if pos.color == 'w' and optimal_score < new_score:
+            optimal_move = move
+            optimal_score = new_score
+            alpha = max(alpha, new_score)
+        elif pos.color == 'b' and optimal_score > new_score:
+            optimal_move = move
+            optimal_score = new_score
+            beta = min(beta, new_score)
+        if alpha > beta:
             break
-    pos.optimal_move = optimum.last_move
-    pos.score = optimum.score
+        new_pos.unmake_last_move()
+    pos.optimal_move = optimal_move
+    pos.score = optimal_score
     return pos
 
 def test_minimax():
-    pass  # how do you create a mock for gen_all_moves? :S
+    pos = Position()
+    pos.board = [[' ', ' ']]
+    pass
+#### #### #### #### ####
+
+def first_move(pos):
+    bishops = []
+    for y in range(8):
+        for x in range(8):
+            if (pos.board[y][x] == 'B' and pos.color == 'w' or
+                pos.board[y][x] == 'b' and pos.color == 'b'):
+                bishops.append(Square(x, y))
+    candidates = []
+    for b in bishops:
+        dx = 1 if b.x < 4 else -1
+        y = 6 if pos.color == 'w' else 1
+        new_y = 5 if pos.color == 'w' else 2
+        candidates.append((Square(b.x+dx, y), Square(b.x+dx, new_y)))
+    if pos.color == 'w':
+        return candidates[0]
+    candidate_positions = []
+    for c in candidates:
+        pos.make_move(c)
+        candidate_positions.append(Position(pos))
+        pos.unmake_last_move()
+    opt = max if pos.color == 'w' else min
+    return opt(candidate_positions, key=lambda c: minimax(Position(), -1000, 1000, 1).score)
+
 #### #### #### #### ####
 
 def algebraic_to_square(algebraic):
@@ -286,19 +370,11 @@ print("fen")
 
 # game loop
 while True:
-    pos = Position()
+    COPY_COUNTER = 0
 
     inputs = input().split()
     start_time = time.time_ns()
-    for rank in inputs[0].split('/'):
-        pos.board.append([])
-        for square in rank:
-            if square.isdigit():
-                for _ in range(int(square)):
-                    pos.board[-1].append(' ')
-            else:
-                pos.board[-1].append(square)
-    pos.color = inputs[1]
+    pos = Position.from_fen(inputs[0], inputs[1])
 
     # use 'moves' and 'lastmove' perhaps?
 
@@ -312,9 +388,14 @@ while True:
     print(list(map(move_to_algebraic, all_moves)), file=sys.stderr, flush=True)
     best = minimax(pos, -1000, 1000, 2)
     print(best, file=sys.stderr, flush=True)
-    #print(tree, file=sys.stderr, flush=True)
     #print("score: %0.2f" % score_material(pos), file=sys.stderr, flush=True)
 
-    print(move_to_algebraic(best.optimal_move))
+    if full_move == 1:
+        print(move_to_algebraic(first_move(pos)))
+    elif best.optimal_move is None:
+        print("random")
+    else:
+        print(move_to_algebraic(best.optimal_move))
 
+    print("copies made: %d" % COPY_COUNTER, file=sys.stderr, flush=True)
     print("time used: %d microsecs" % ((time.time_ns() - start_time) / (10**3)), file=sys.stderr, flush=True)
